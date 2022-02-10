@@ -1,4 +1,5 @@
 from setuptools import setup
+from glob import glob
 
 package_name = 'human_pose_estimation'
 
@@ -10,6 +11,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/models', glob("*.tflite") )
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -23,4 +25,10 @@ setup(
             'human_body_pose = human_pose_estimation.human_body_pose:main'
         ],
     },
+    py_modules=[
+        'human_pose_estimation.data',
+        'human_pose_estimation.utils',
+        'human_pose_estimation.ml.__init__',
+        'human_pose_estimation.tracker.__init__'
+    ]
 )
