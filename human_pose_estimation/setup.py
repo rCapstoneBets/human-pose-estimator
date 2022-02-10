@@ -1,6 +1,6 @@
 from setuptools import setup
 
-package_name = 'human-pose-estim'
+package_name = 'human_pose_estimation'
 
 setup(
     name=package_name,
@@ -20,6 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'human_body_pose = human_pose_estimation.human_body_pose:main'
         ],
     },
 )
