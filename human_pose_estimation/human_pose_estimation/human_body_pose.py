@@ -20,8 +20,14 @@ import time
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data, qos_profile_system_default
 
-import cv2
+from sensor_msgs.msg import Image # Image is the message type
+from std_msgs.msg import Bool, UInt8
+from sensor_msgs.msg import JointState
+from cv_bridge import CvBridge # Package to convert between ROS and OpenCV Images
+import cv2 # OpenCV library
+
 from human_pose_estimation.ml.classifier import Classifier
 from human_pose_estimation.ml.movenet import Movenet
 from human_pose_estimation.ml.movenet_multipose import MoveNetMultiPose
@@ -31,183 +37,119 @@ import human_pose_estimation.utils as utils
 class HumanPoseNode(Node):
 
     def __init__(self):
-        pass
+        super().__init__("human_body_pose")
+        # create data subscriptions for camera
+        self.image_sub = self.create_subscription(Image, "/robot/signaling/raw", self.new_frame, qos_profile_system_default)
+        self.debug_sub = self.create_subscription(UInt8, "/robot/debug", self.debug_cb, qos_profile_system_default)
 
-    def new_frame(self, msg):
-        pass
+        # create publishers for processed data
+        self.image_pub = self.create_publisher(Image, "/robot/signaling/overlay", qos_profile_system_default)
+        self.trigger_pub = self.create_publisher(Bool, "/robot/signaling/signal", qos_profile_system_default)
+        self.joint_pub = self.create_publisher(JointState, "/robot/signaling/joints", qos_profile_system_default)
 
-    def run(self, estimation_model: str, tracker_type: str, classification_model: str,
-            label_file: str, camera_id: str, width: int, height: int) -> None:
-        """Continuously run inference on images acquired from the camera.
-        Args:
-            estimation_model: Name of the TFLite pose estimation model.
-            tracker_type: Type of Tracker('keypoint' or 'bounding_box').
-            classification_model: Name of the TFLite pose classification model.
-            (Optional)
-            label_file: Path to the label file for the pose classification model. Class
-            names are listed one name per line, in the same order as in the
-            classification model output. See an example in the yoga_labels.txt file.
-            camera_id: The camera id to be passed to OpenCV.
-            width: The width of the frame captured from the camera.
-            height: The height of the frame captured from the camera.
-        """
+        self.debug = 0
 
+        # declare params
+        # declare the configuration data
+        self.declare_parameters(
+            namespace='',
+            parameters=[
+                ('model_name', 'movenet_thunder.tflite'),
+                ('tracker_type', 'bounding_box'),
+                ('classif_name', 'bounding_box'),
+                ('classif_det_thresh', 10.0),
+                ('min_human_frame_pct', 10.0),
+                ('max_human_frame_pct', 90.0),
+                ('min_arm_angle', 60.0),
+                ('max_arm_angle', 125.0)
+            ])
+
+        self.config = {}
+        self.params = [
+            'model_name',
+            'min_human_frame_pct',
+            'max_human_frame_pct',
+            'min_arm_angle',
+            'max_arm_angle',
+            'tracker_type',
+            'classif_det_thresh'
+        ]
+
+        for param in self.get_parameters(self.params):
+            self.config[param.name] = param.value
+
+        self.estimation_model = self.config['model_name']
+        self.tracker_type = self.config['tracker_type']
+
+        # Used to convert between ROS and OpenCV images
+        self.br = CvBridge()
+
+        # load model now
         # Notify users that tracker is only enabled for MoveNet MultiPose model.
-        if tracker_type and ('movenet_multipose' not in estimation_model):
-            logging.warning(
+        if self.tracker_type and ('movenet_multipose' not in self.estimation_model):
+            self.get_logger().warning(
                 'No tracker will be used as tracker can only be enabled for '
                 'MoveNet MultiPose model.')
 
         # Initialize the pose estimator selected.
-        if 'movenet_lightning' in  estimation_model or 'movenet_thunder' in estimation_model :
-            pose_detector = Movenet(estimation_model)
-        elif 'posenet' in estimation_model:
-            pose_detector = Posenet(estimation_model)
-        elif 'movenet_multipose' in estimation_model:
-            pose_detector = MoveNetMultiPose(estimation_model, tracker_type)
+        if 'movenet_lightning' in  self.estimation_model or 'movenet_thunder' in self.estimation_model :
+            self.pose_detector = Movenet(self.estimation_model )
+        elif 'posenet' in self.estimation_model :
+            self.pose_detector = Posenet(self.estimation_model )
+        elif 'movenet_multipose' in self.estimation_model :
+            self.pose_detector = MoveNetMultiPose(self.estimation_model , self.tracker_type)
         else:
+            self.get_logger().fatal('ERROR: Model {} is not supported.'.format(self.estimation_model ))
             sys.exit('ERROR: Model is not supported.')
 
-        # Variables to calculate FPS
-        counter, fps = 0, 0
-        start_time = time.time()
-
-        camera_id = 'rtsp://admin:cole23tu!@192.168.1.153:554/media/video1'
-
-        # Start capturing video input from the camera
-        print("opening video stream from {}".format(camera_id))
-        cap = cv2.VideoCapture(camera_id)
-
-        print("setting resolution")
-
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-
-        # Visualization parameters
-        row_size = 20  # pixels
-        left_margin = 24  # pixels
-        text_color = (0, 0, 255)  # red
-        font_size = 1
-        font_thickness = 1
-        classification_results_to_show = 3
-        fps_avg_frame_count = 10
-        keypoint_detection_threshold_for_classifier = 0.1
-        classifier = None
-
-        # Initialize the classification model
-        if classification_model:
-            classifier = Classifier(classification_model, label_file)
-            classification_results_to_show = min(classification_results_to_show,
-                                                len(classifier.pose_class_names))
-
-        # Continuously capture images from the camera and run inference
-        while cap.isOpened():
-            success, image = cap.read()
-            if not success:
-                sys.exit(
-                    'ERROR: Unable to read from webcam. Please verify your webcam settings.'
-                )
-
-            counter += 1
-            image = cv2.flip(image, 1)
-
-            if estimation_model == 'movenet_multipose':
-                # Run pose estimation using a MultiPose model.
-                list_persons = pose_detector.detect(image)
-            else:
-                # Run pose estimation using a SinglePose model, and wrap the result in an
-                # array.
-                list_persons = [pose_detector.detect(image)]
-
-            # Draw keypoints and edges on input image
-            image = utils.visualize(image, list_persons)
-
-            if not classifier:
-                # Check if all keypoints are detected before running the classifier.
-                # If there's a keypoint below the threshold, show an error.
-                person = list_persons[0]
-                min_score = min([keypoint.score for keypoint in person.keypoints])
-                if min_score < keypoint_detection_threshold_for_classifier:
-                    error_text = 'Some keypoints are not detected.'
-                    text_location = (left_margin, 2 * row_size)
-                    cv2.putText(image, error_text, text_location, cv2.FONT_HERSHEY_PLAIN,
-                                font_size, text_color, font_thickness)
-                    error_text = 'Make sure the person is fully visible in the camera.'
-                    text_location = (left_margin, 3 * row_size)
-                    cv2.putText(image, error_text, text_location, cv2.FONT_HERSHEY_PLAIN,
-                                font_size, text_color, font_thickness)
-            else:
-                # Run pose classification
-                prob_list = classifier.classify_pose(person)
-
-                # Show classification results on the image
-                for i in range(classification_results_to_show):
-                    class_name = prob_list[i].label
-                    probability = round(prob_list[i].score, 2)
-                    result_text = class_name + ' (' + str(probability) + ')'
-                    text_location = (left_margin, (i + 2) * row_size)
-                    cv2.putText(image, result_text, text_location, cv2.FONT_HERSHEY_PLAIN,
-                                font_size, text_color, font_thickness)
-
-            # Calculate the FPS
-            if counter % fps_avg_frame_count == 0:
-                end_time = time.time()
-                fps = fps_avg_frame_count / (end_time - start_time)
-                start_time = time.time()
-
-            # Show the FPS
-            fps_text = 'FPS = ' + str(int(fps))
-            text_location = (left_margin, row_size)
-            cv2.putText(image, fps_text, text_location, cv2.FONT_HERSHEY_PLAIN,
-                        font_size, text_color, font_thickness)
-
-            # Stop the program if the ESC key is pressed.
-            if cv2.waitKey(1) == 27:
-                break
-
-            cv2.imshow(estimation_model, image)
-
-        cap.release()
-        cv2.destroyAllWindows()
+        self.get_logger().info("Startup complete, model is loaded")
+        
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument(
-        '--model',
-        help='Name of estimation model.',
-        required=False,
-        default='movenet_lightning')
-    parser.add_argument(
-        '--tracker',
-        help='Type of tracker to track poses across frames.',
-        required=False,
-        default='bounding_box')
-    parser.add_argument(
-        '--classifier', help='Name of classification model.', required=False)
-    parser.add_argument(
-        '--label_file',
-        help='Label file for classification.',
-        required=False,
-        default='labels.txt')
-    parser.add_argument(
-        '--cameraId', help='Id of camera.', required=False, default=0)
-    parser.add_argument(
-        '--frameWidth',
-        help='Width of frame to capture from camera.',
-        required=False,
-        default=640)
-    parser.add_argument(
-        '--frameHeight',
-        help='Height of frame to capture from camera.',
-        required=False,
-        default=480)
-    args = parser.parse_args()
+    def new_frame(self, msg: Image):
+        # Convert ROS Image message to OpenCV image
+        current_frame = self.br.imgmsg_to_cv2(msg)
+        if(self.debug > 3): self.get_logger().info("got frame")
+        
+        #cv2.imshow(self.estimation_model, current_frame)
+
+        # have the NN process the image
+        processed_frame = self.run(current_frame)
+
+        # convert the frame back to an image
+        processed_image = self.br.cv2_to_imgmsg(processed_frame, "bgr8")
+
+        #publish the overlaid image
+        self.image_pub.publish(processed_image)
+
+    def debug_cb(self, msg: UInt8):
+        self.debug = msg.data
+
+    def run(self, image):
+
+        if self.estimation_model == 'movenet_multipose':
+            # Run pose estimation using a MultiPose model.
+            list_persons = self.pose_detector.detect(image)
+        else:
+            # Run pose estimation using a SinglePose model, and wrap the result in an
+            # array.
+            list_persons = [self.pose_detector.detect(image)]
+
+        # Draw keypoints and edges on input image
+        image = utils.visualize(image, list_persons)
+
+        return image
+        
+
+
+def main(args=None):
+    rclpy.init(args=args)
 
     node = HumanPoseNode()
-    node.run(args.model, args.tracker, args.classifier, args.label_file,
-        args.cameraId, args.frameWidth, args.frameHeight)
+
+    rclpy.spin(node)
+
+    rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

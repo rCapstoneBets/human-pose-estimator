@@ -11,7 +11,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/models', glob("*.tflite") )
+        ('share/' + package_name + '/models', glob("models/*.tflite") )
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -28,7 +28,13 @@ setup(
     py_modules=[
         'human_pose_estimation.data',
         'human_pose_estimation.utils',
-        'human_pose_estimation.ml.__init__',
-        'human_pose_estimation.tracker.__init__'
+        'human_pose_estimation.ml.classifier',
+        'human_pose_estimation.ml.movenet_multipose',
+        'human_pose_estimation.ml.movenet',
+        'human_pose_estimation.ml.posenet',
+        'human_pose_estimation.tracker.bounding_box_tracker',
+        'human_pose_estimation.tracker.config',
+        'human_pose_estimation.tracker.keypoint_tracker',
+        'human_pose_estimation.tracker.tracker',
     ]
 )
