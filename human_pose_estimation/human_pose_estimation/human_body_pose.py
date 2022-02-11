@@ -26,9 +26,7 @@ from sensor_msgs.msg import Image # Image is the message type
 from std_msgs.msg import Bool, UInt8
 from sensor_msgs.msg import JointState
 from cv_bridge import CvBridge # Package to convert between ROS and OpenCV Images
-import cv2 # OpenCV library
 
-from human_pose_estimation.ml.classifier import Classifier
 from human_pose_estimation.ml.movenet import Movenet
 from human_pose_estimation.ml.movenet_multipose import MoveNetMultiPose
 from human_pose_estimation.ml.posenet import Posenet
