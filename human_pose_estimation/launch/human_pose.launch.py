@@ -25,6 +25,7 @@ def generate_launch_description():
             executable="human_body_pose",
             name="human_pose",
             output="screen",
+            arguments=['--ros-args', '--log-level', LaunchConfiguration("log_level")],
             parameters=[
                 {"model_name": model_path}
             ]
