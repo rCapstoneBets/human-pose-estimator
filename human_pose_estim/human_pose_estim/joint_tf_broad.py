@@ -1,8 +1,6 @@
 from enum import Enum
 from copy import copy, deepcopy
 
-from pyrr import Vector3
-
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
