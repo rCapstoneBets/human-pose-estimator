@@ -177,10 +177,11 @@ class TranslatorNode(Node):
             return
             
 
-        self.get_logger().debug(f'Found new valid detection {trackedObj.position}')
+        trackedBodyPt = trackedObj.head_position
+        self.get_logger().debug(f'Found new valid detection {trackedBodyPt}')
 
         # process body point
-        bodyPoint = Vector3(x=float(trackedObj.position[0]), y=float(trackedObj.position[1]), z=float(trackedObj.position[2]))
+        bodyPoint = Vector3(x=float(trackedBodyPt[0]), y=float(trackedBodyPt[1]), z=float(trackedBodyPt[2]))
         self.sendSkeletonPointTf(PLAYER_FRAME, bodyPoint)
 
         # get relative pose to shoot
